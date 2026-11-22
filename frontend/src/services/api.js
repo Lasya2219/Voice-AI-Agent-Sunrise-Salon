@@ -64,19 +64,21 @@ export const api = {
     return res.data;
   },
 
-  rescheduleBooking: async (bookingId, newStartTime) => {
+  rescheduleBooking: async (bookingId, newStartTime, customerPhone = '') => {
     const res = await client.put('/bookings/reschedule', {
       business_slug: BUSINESS_SLUG,
       booking_id: bookingId,
+      customer_phone: customerPhone,
       new_start_time: newStartTime,
     });
     return res.data;
   },
 
-  cancelBooking: async (bookingId, reason = 'Customer requested cancellation') => {
+  cancelBooking: async (bookingId, customerPhone = '', reason = 'Customer requested cancellation') => {
     const res = await client.put('/bookings/cancel', {
       business_slug: BUSINESS_SLUG,
       booking_id: bookingId,
+      customer_phone: customerPhone,
       reason,
     });
     return res.data;
