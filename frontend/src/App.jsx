@@ -19,16 +19,108 @@ import CallPage from './pages/CallPage';
 import api from './services/api';
 import './App.css';
 
+// Default Fallback Catalog (Preloaded so dropdowns and menus are never blank)
+const DEFAULT_SERVICES = [
+  {
+    id: 1,
+    name: "Women's Haircut",
+    price: 600,
+    duration_minutes: 30,
+    category: "Hair",
+    description: "Precision haircut, hair wash, and blow-dry styling for women.",
+  },
+  {
+    id: 2,
+    name: "Men's Haircut",
+    price: 400,
+    duration_minutes: 30,
+    category: "Hair",
+    description: "Classic or modern men's haircut with beard touch-up.",
+  },
+  {
+    id: 3,
+    name: "Blow Dry / Styling",
+    price: 500,
+    duration_minutes: 30,
+    category: "Styling",
+    description: "Professional blow dry, volume blast, and heat styling.",
+  },
+  {
+    id: 4,
+    name: "Hair Colour",
+    price: 2500,
+    duration_minutes: 30,
+    category: "Colour",
+    description: "Global hair colouring, root touch-up, and highlights (starts at ₹2,500).",
+  },
+  {
+    id: 5,
+    name: "Hair Spa",
+    price: 1200,
+    duration_minutes: 30,
+    category: "Treatment",
+    description: "Deep conditioning restorative hair spa for frizz control and shine.",
+  },
+  {
+    id: 6,
+    name: "Facial",
+    price: 1500,
+    duration_minutes: 30,
+    category: "Skin",
+    description: "Rejuvenating skin glow and deep pore cleanse facial.",
+  },
+  {
+    id: 7,
+    name: "Clean-up",
+    price: 800,
+    duration_minutes: 30,
+    category: "Skin",
+    description: "Exfoliating skin clean-up and blackhead extraction treatment.",
+  },
+];
+
+const DEFAULT_STYLISTS = [
+  {
+    id: 1,
+    name: "Anita",
+    specialty: "Hair Styling, Cuts & Blow Dry",
+    services: [1, 2, 3],
+    working_days: "Mon - Sat (10:00 AM – 2:00 PM)",
+    assigned_services: "Women's Haircut, Men's Haircut, Blow Dry / Styling",
+  },
+  {
+    id: 2,
+    name: "Rahul",
+    specialty: "Hair Colouring & Hair Spa Specialist",
+    services: [4, 5],
+    working_days: "Tue, Thu, Sat (4:00 PM – 8:00 PM)",
+    assigned_services: "Hair Colour, Hair Spa",
+  },
+  {
+    id: 3,
+    name: "Kavya",
+    specialty: "Facials & Skin Clean-up Expert",
+    services: [6, 7],
+    working_days: "Mon, Wed, Fri (9:00 AM – 1:00 PM)",
+    assigned_services: "Facial, Clean-up",
+  },
+];
+
 function App() {
   const [activeTab, setActiveTab] = useState('call'); // 'call' | 'services' | 'availability' | 'bookings'
-  const [businessInfo, setBusinessInfo] = useState(null);
-  const [services, setServices] = useState([]);
-  const [stylists, setStylists] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [businessInfo, setBusinessInfo] = useState({
+    name: "Sunrise Salon",
+    phone: "+91 98765 43210",
+    address: "12 Lake Road, Indiranagar, Bengaluru",
+    cancellation_window_hours: 2,
+  });
+  const [services, setServices] = useState(DEFAULT_SERVICES);
+  const [stylists, setStylists] = useState(DEFAULT_STYLISTS);
+  const [loading, setLoading] = useState(false);
   const [notification, setNotification] = useState(null);
 
   // Availability & Booking State
-  const [selectedServiceId, setSelectedServiceId] = useState('');
+  const [selectedServiceId, setSelectedServiceId] = useState('1');
   const [selectedStylistId, setSelectedStylistId] = useState('');
   const [selectedDate, setSelectedDate] = useState(() => {
     const today = new Date();
@@ -53,26 +145,36 @@ function App() {
   const [rescheduleDate, setRescheduleDate] = useState('');
   const [rescheduleTime, setRescheduleTime] = useState('');
 
-  // Initial Load from Backend
+  // Initial Load from Backend (Enriches with live data if backend is reachable)
   useEffect(() => {
     async function loadInitialData() {
       try {
-        setLoading(true);
         const [biz, svcs, stys] = await Promise.all([
           api.getBusiness().catch(() => null),
           api.getServices().catch(() => []),
           api.getStylists().catch(() => []),
         ]);
-        setBusinessInfo(biz);
-        setServices(svcs);
-        setStylists(stys);
-        if (svcs.length > 0) {
+        if (biz) setBusinessInfo(biz);
+        if (svcs && svcs.length > 0) {
+          setServices(svcs);
           setSelectedServiceId(svcs[0].id.toString());
         }
+        if (stys && stys.length > 0) {
+          // Merge working days & specialties if backend only returns basic fields
+          const merged = stys.map((s) => {
+            const fallback = DEFAULT_STYLISTS.find((d) => d.id === s.id);
+            return {
+              ...fallback,
+              ...s,
+              services: fallback?.services || s.services || [],
+              working_days: fallback?.working_days || s.working_days || "Mon - Sat",
+              specialty: fallback?.specialty || s.specialty || "Salon Professional",
+            };
+          });
+          setStylists(merged);
+        }
       } catch (err) {
-        console.error('Failed to load initial data', err);
-      } finally {
-        setLoading(false);
+        console.warn('Backend not yet reachable, using preloaded catalog', err);
       }
     }
     loadInitialData();
@@ -331,8 +433,13 @@ function App() {
                   <h3>{sty.name}</h3>
                   <p className="stylist-specialty">{sty.specialty || 'Master Hair Stylist'}</p>
                   <div className="stylist-working-days">
-                    <small>Working days: Mon - Sat</small>
+                    <small>Schedule: <strong>{sty.working_days || 'Mon - Sat'}</strong></small>
                   </div>
+                  {sty.assigned_services && (
+                    <div className="stylist-services-tag">
+                      <small>Services: {sty.assigned_services}</small>
+                    </div>
+                  )}
                   <button
                     className="btn-select-stylist"
                     onClick={() => {
@@ -395,11 +502,14 @@ function App() {
                     onChange={(e) => setSelectedStylistId(e.target.value)}
                   >
                     <option value="">Any Available Stylist</option>
-                    {stylists.map((st) => (
-                      <option key={st.id} value={st.id}>
-                        {st.name} ({st.specialty})
-                      </option>
-                    ))}
+                    {stylists.map((st) => {
+                      const isAssigned = (st.services || []).includes(parseInt(selectedServiceId, 10));
+                      return (
+                        <option key={st.id} value={st.id}>
+                          {st.name} {isAssigned ? `★ (Assigned Stylist • ${st.working_days || 'Available'})` : `(${st.specialty})`}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
 
