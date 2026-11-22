@@ -1,4 +1,4 @@
 livekit-agents[groq,openai,silero]~=1.8
 httpx>=0.28.1
-python-dotenv>=1.0.0
+python-dotenv
 tzdata>=2024.1
