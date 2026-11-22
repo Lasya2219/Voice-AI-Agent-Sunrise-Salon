@@ -1,0 +1,46 @@
+# Environment variables & secrets (CRITICAL: Do NOT commit)
+.env
+.env*
+*.env
+**/.env
+**/.env*
+**/*.env
+!.env.example
+!**/.env.example
+
+# Python & Virtual Environments
+venv/
+.venv/
+env/
+**/venv/
+**/.venv/
+**/env/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Node & Frontend
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+dist-ssr/
+.vite/
+**/package-lock.json.bak
+*.local
+
+# Testing & Logs
+.pytest_cache/
+**/.pytest_cache/
+.coverage
+htmlcov/
+*.log
+**/*.log
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

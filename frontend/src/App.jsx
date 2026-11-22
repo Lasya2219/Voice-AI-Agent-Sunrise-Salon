@@ -1,0 +1,627 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  PhoneCall, 
+  Scissors, 
+  Calendar, 
+  Clock, 
+  User, 
+  CheckCircle2, 
+  AlertCircle, 
+  Sparkles, 
+  MapPin, 
+  Phone, 
+  RefreshCw,
+  X,
+  ChevronRight,
+  ShieldAlert
+} from 'lucide-react';
+import CallPage from './pages/CallPage';
+import api from './services/api';
+import './App.css';
+
+function App() {
+  const [activeTab, setActiveTab] = useState('call'); // 'call' | 'services' | 'availability' | 'bookings'
+  const [businessInfo, setBusinessInfo] = useState(null);
+  const [services, setServices] = useState([]);
+  const [stylists, setStylists] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [notification, setNotification] = useState(null);
+
+  // Availability & Booking State
+  const [selectedServiceId, setSelectedServiceId] = useState('');
+  const [selectedStylistId, setSelectedStylistId] = useState('');
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const today = new Date();
+    // Default to tomorrow
+    today.setDate(today.getDate() + 1);
+    return today.toISOString().split('T')[0];
+  });
+  const [availableSlots, setAvailableSlots] = useState([]);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [selectedSlot, setSelectedSlot] = useState(null);
+  const [bookingForm, setBookingForm] = useState({
+    customerName: '',
+    customerPhone: '',
+  });
+  const [bookingSubmitting, setBookingSubmitting] = useState(false);
+
+  // Customer Bookings Lookup State
+  const [lookupPhone, setLookupPhone] = useState('');
+  const [customerBookings, setCustomerBookings] = useState([]);
+  const [bookingsLoading, setBookingsLoading] = useState(false);
+  const [rescheduleModal, setRescheduleModal] = useState(null); // booking object or null
+  const [rescheduleDate, setRescheduleDate] = useState('');
+  const [rescheduleTime, setRescheduleTime] = useState('');
+
+  // Initial Load from Backend
+  useEffect(() => {
+    async function loadInitialData() {
+      try {
+        setLoading(true);
+        const [biz, svcs, stys] = await Promise.all([
+          api.getBusiness().catch(() => null),
+          api.getServices().catch(() => []),
+          api.getStylists().catch(() => []),
+        ]);
+        setBusinessInfo(biz);
+        setServices(svcs);
+        setStylists(stys);
+        if (svcs.length > 0) {
+          setSelectedServiceId(svcs[0].id.toString());
+        }
+      } catch (err) {
+        console.error('Failed to load initial data', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadInitialData();
+  }, []);
+
+  const showNotification = (message, type = 'success') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 6000);
+  };
+
+  // Check Availability
+  const handleCheckAvailability = async () => {
+    if (!selectedServiceId || !selectedDate) {
+      showNotification('Please select a service and date.', 'error');
+      return;
+    }
+    setAvailabilityLoading(true);
+    setSelectedSlot(null);
+    try {
+      const data = await api.getAvailability(
+        parseInt(selectedServiceId, 10),
+        selectedDate,
+        selectedStylistId ? parseInt(selectedStylistId, 10) : null
+      );
+      setAvailableSlots(data.available_slots || []);
+      if (!data.available_slots || data.available_slots.length === 0) {
+        showNotification(
+          data.reason ? `No slots available: ${data.reason.replace('_', ' ')}` : 'No slots available for this date.',
+          'info'
+        );
+      }
+    } catch (err) {
+      showNotification('Failed to check availability with salon backend.', 'error');
+    } finally {
+      setAvailabilityLoading(false);
+    }
+  };
+
+  // Trigger availability on criteria change
+  useEffect(() => {
+    if (activeTab === 'availability' && selectedServiceId && selectedDate) {
+      handleCheckAvailability();
+    }
+  }, [activeTab, selectedServiceId, selectedStylistId, selectedDate]);
+
+  // Handle Create Booking
+  const handleCreateBookingSubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedSlot) {
+      showNotification('Please choose an available appointment slot.', 'error');
+      return;
+    }
+    if (!bookingForm.customerName.trim() || bookingForm.customerPhone.length < 10) {
+      showNotification('Please provide a valid name and 10-digit phone number.', 'error');
+      return;
+    }
+
+    setBookingSubmitting(true);
+    try {
+      const result = await api.createBooking({
+        customerName: bookingForm.customerName.trim(),
+        customerPhone: bookingForm.customerPhone.trim(),
+        serviceId: parseInt(selectedServiceId, 10),
+        stylistId: selectedSlot.stylist_id,
+        startTime: selectedSlot.start_time,
+      });
+
+      showNotification(`Booking #${result.booking_id} confirmed for ${result.service_name} on ${new Date(result.start_time).toLocaleDateString()}!`, 'success');
+      setSelectedSlot(null);
+      setBookingForm({ customerName: '', customerPhone: '' });
+      // Refresh availability
+      handleCheckAvailability();
+    } catch (err) {
+      const msg = err.response?.data?.detail || 'Booking failed. The slot may have just been reserved.';
+      showNotification(msg, 'error');
+    } finally {
+      setBookingSubmitting(false);
+    }
+  };
+
+  // Handle Customer Bookings Lookup
+  const handleLookupBookings = async (e) => {
+    e?.preventDefault();
+    if (!lookupPhone.trim() || lookupPhone.trim().length < 10) {
+      showNotification('Please enter a 10-digit customer phone number.', 'error');
+      return;
+    }
+    setBookingsLoading(true);
+    try {
+      const data = await api.getCustomerBookings(lookupPhone.trim());
+      setCustomerBookings(data.bookings || []);
+      if (!data.bookings || data.bookings.length === 0) {
+        showNotification(`No appointments found for phone ending in ${lookupPhone.slice(-4)}.`, 'info');
+      }
+    } catch (err) {
+      showNotification('Could not retrieve appointments.', 'error');
+    } finally {
+      setBookingsLoading(false);
+    }
+  };
+
+  // Handle Cancel Booking
+  const handleCancelBooking = async (bookingId) => {
+    if (!window.confirm('Are you sure you want to cancel this appointment?')) return;
+    try {
+      const res = await api.cancelBooking(bookingId);
+      const isLate = res.cancellation_status?.is_late_cancellation;
+      showNotification(
+        `Booking #${bookingId} cancelled. ${isLate ? '(Late cancellation policy recorded)' : '(Free cancellation)'}`,
+        'success'
+      );
+      handleLookupBookings();
+    } catch (err) {
+      showNotification(err.response?.data?.detail || 'Failed to cancel booking.', 'error');
+    }
+  };
+
+  // Handle Reschedule Booking Submit
+  const handleRescheduleSubmit = async (e) => {
+    e.preventDefault();
+    if (!rescheduleModal || !rescheduleDate || !rescheduleTime) {
+      showNotification('Please specify the new date and time.', 'error');
+      return;
+    }
+
+    // Format new start time
+    const newStart = `${rescheduleDate}T${rescheduleTime}:00+05:30`;
+
+    try {
+      const res = await api.rescheduleBooking(rescheduleModal.booking_id, newStart);
+      showNotification(`Booking #${res.booking_id} rescheduled to ${new Date(res.start_time).toLocaleString()}!`, 'success');
+      setRescheduleModal(null);
+      handleLookupBookings();
+    } catch (err) {
+      showNotification(err.response?.data?.detail || 'Could not reschedule to requested slot.', 'error');
+    }
+  };
+
+  const formatSlotTime = (isoString) => {
+    const d = new Date(isoString);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  return (
+    <div className="salon-app-root">
+      {/* Toast Notification */}
+      {notification && (
+        <div className={`toast-notification ${notification.type}`}>
+          {notification.type === 'success' && <CheckCircle2 size={18} />}
+          {notification.type === 'error' && <AlertCircle size={18} />}
+          {notification.type === 'info' && <Sparkles size={18} />}
+          <span>{notification.message}</span>
+          <button className="toast-close" onClick={() => setNotification(null)}><X size={14} /></button>
+        </div>
+      )}
+
+      {/* Main Navigation Bar */}
+      <header className="salon-navbar">
+        <div className="nav-brand">
+          <div className="brand-logo">
+            <Scissors size={24} />
+          </div>
+          <div>
+            <h1 className="brand-title">{businessInfo?.name || "Sunrise Salon"}</h1>
+            <span className="brand-tagline">AI-Powered Voice Receptionist & Salon Studio</span>
+          </div>
+        </div>
+
+        <nav className="nav-tabs">
+          <button
+            className={`tab-btn ${activeTab === 'call' ? 'active' : ''}`}
+            onClick={() => setActiveTab('call')}
+          >
+            <PhoneCall size={18} />
+            <span>AI Voice Call</span>
+          </button>
+          <button
+            className={`tab-btn ${activeTab === 'services' ? 'active' : ''}`}
+            onClick={() => setActiveTab('services')}
+          >
+            <Scissors size={18} />
+            <span>Services & Stylists</span>
+          </button>
+          <button
+            className={`tab-btn ${activeTab === 'availability' ? 'active' : ''}`}
+            onClick={() => setActiveTab('availability')}
+          >
+            <Calendar size={18} />
+            <span>Book Appointment</span>
+          </button>
+          <button
+            className={`tab-btn ${activeTab === 'bookings' ? 'active' : ''}`}
+            onClick={() => setActiveTab('bookings')}
+          >
+            <User size={18} />
+            <span>My Bookings</span>
+          </button>
+        </nav>
+      </header>
+
+      {/* Main App Content View */}
+      <main className="salon-main-container">
+        {/* VIEW 1: AI Voice Call Receptionist */}
+        {activeTab === 'call' && (
+          <CallPage businessInfo={businessInfo} />
+        )}
+
+        {/* VIEW 2: Services & Stylists Menu */}
+        {activeTab === 'services' && (
+          <div className="services-page">
+            <div className="section-title-wrap">
+              <h2>Salon Services & Pricing</h2>
+              <p>Explore our wide range of premium hair, skin, and styling treatments.</p>
+            </div>
+
+            <div className="services-grid">
+              {services.map((svc) => (
+                <div key={svc.id} className="service-card">
+                  <div className="service-card-top">
+                    <span className="service-category">{svc.category || 'Treatment'}</span>
+                    <span className="service-price">₹{svc.price}</span>
+                  </div>
+                  <h3 className="service-name">{svc.name}</h3>
+                  <p className="service-desc">{svc.description || 'Professional salon treatment by experienced specialists.'}</p>
+                  <div className="service-card-footer">
+                    <div className="service-duration">
+                      <Clock size={16} />
+                      <span>{svc.duration_minutes} mins</span>
+                    </div>
+                    <button
+                      className="btn-book-service"
+                      onClick={() => {
+                        setSelectedServiceId(svc.id.toString());
+                        setActiveTab('availability');
+                      }}
+                    >
+                      <span>Check Slots</span>
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="section-title-wrap mt-lg">
+              <h2>Our Master Stylists</h2>
+              <p>Meet our certified team dedicated to bringing out your best look.</p>
+            </div>
+
+            <div className="stylists-grid">
+              {stylists.map((sty) => (
+                <div key={sty.id} className="stylist-card">
+                  <div className="stylist-avatar">
+                    <User size={30} />
+                  </div>
+                  <h3>{sty.name}</h3>
+                  <p className="stylist-specialty">{sty.specialty || 'Master Hair Stylist'}</p>
+                  <div className="stylist-working-days">
+                    <small>Working days: Mon - Sat</small>
+                  </div>
+                  <button
+                    className="btn-select-stylist"
+                    onClick={() => {
+                      setSelectedStylistId(sty.id.toString());
+                      setActiveTab('availability');
+                    }}
+                  >
+                    Book with {sty.name.split(' ')[0]}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* VIEW 3: Check Availability & Book Online */}
+        {activeTab === 'availability' && (
+          <div className="booking-page">
+            <div className="section-title-wrap">
+              <h2>Real-Time Availability & Booking</h2>
+              <p>Check available appointment slots and reserve instantly.</p>
+            </div>
+
+            <div className="booking-grid-layout">
+              {/* Filter Panel */}
+              <div className="booking-filter-card">
+                <h3>Select Criteria</h3>
+
+                <div className="form-group">
+                  <label htmlFor="service-select">Service</label>
+                  <select
+                    id="service-select"
+                    value={selectedServiceId}
+                    onChange={(e) => setSelectedServiceId(e.target.value)}
+                  >
+                    {services.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} (₹{s.price} • {s.duration_minutes}m)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="date-select">Preferred Date</label>
+                  <input
+                    id="date-select"
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) => setSelectedDate(e.target.value)}
+                    min={new Date().toISOString().split('T')[0]}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="stylist-select">Stylist (Optional)</label>
+                  <select
+                    id="stylist-select"
+                    value={selectedStylistId}
+                    onChange={(e) => setSelectedStylistId(e.target.value)}
+                  >
+                    <option value="">Any Available Stylist</option>
+                    {stylists.map((st) => (
+                      <option key={st.id} value={st.id}>
+                        {st.name} ({st.specialty})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <button
+                  className="btn-refresh-slots"
+                  onClick={handleCheckAvailability}
+                  disabled={availabilityLoading}
+                >
+                  <RefreshCw size={16} className={availabilityLoading ? 'spin' : ''} />
+                  <span>{availabilityLoading ? 'Checking Slots...' : 'Check Available Slots'}</span>
+                </button>
+              </div>
+
+              {/* Slots & Reservation Form */}
+              <div className="booking-results-card">
+                <div className="slots-header">
+                  <h3>Available Time Slots</h3>
+                  <small>Times displayed in Indian Standard Time (IST)</small>
+                </div>
+
+                {availabilityLoading ? (
+                  <div className="slots-loading">
+                    <RefreshCw size={28} className="spin" />
+                    <p>Fetching real-time schedule from booking engine...</p>
+                  </div>
+                ) : availableSlots.length === 0 ? (
+                  <div className="slots-empty">
+                    <AlertCircle size={32} />
+                    <h4>No slots available for this date</h4>
+                    <p>Sunrise Salon may be closed or fully booked on this day. Please try another date.</p>
+                  </div>
+                ) : (
+                  <div className="slots-chips-grid">
+                    {availableSlots.map((slot, idx) => {
+                      const isSelected = selectedSlot?.start_time === slot.start_time && selectedSlot?.stylist_id === slot.stylist_id;
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          className={`slot-chip ${isSelected ? 'selected' : ''}`}
+                          onClick={() => setSelectedSlot(slot)}
+                        >
+                          <Clock size={14} />
+                          <span className="slot-time">{formatSlotTime(slot.start_time)}</span>
+                          <span className="slot-stylist">{slot.stylist_name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Booking Confirmation Form */}
+                {selectedSlot && (
+                  <form onSubmit={handleCreateBookingSubmit} className="confirm-booking-form">
+                    <div className="selected-summary-banner">
+                      <CheckCircle2 size={20} />
+                      <div>
+                        <strong>Selected Slot:</strong> {formatSlotTime(selectedSlot.start_time)} with {selectedSlot.stylist_name}
+                      </div>
+                    </div>
+
+                    <div className="form-row">
+                      <div className="form-group flex-1">
+                        <label>Your Name</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="e.g. Aditi Rao"
+                          value={bookingForm.customerName}
+                          onChange={(e) => setBookingForm({ ...bookingForm, customerName: e.target.value })}
+                        />
+                      </div>
+                      <div className="form-group flex-1">
+                        <label>10-Digit Phone Number</label>
+                        <input
+                          type="tel"
+                          required
+                          placeholder="e.g. 9876543210"
+                          value={bookingForm.customerPhone}
+                          onChange={(e) => setBookingForm({ ...bookingForm, customerPhone: e.target.value })}
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="btn-confirm-booking"
+                      disabled={bookingSubmitting}
+                    >
+                      {bookingSubmitting ? 'Confirming with Salon Engine...' : 'Confirm Appointment'}
+                    </button>
+                  </form>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* VIEW 4: My Bookings & Manage */}
+        {activeTab === 'bookings' && (
+          <div className="my-bookings-page">
+            <div className="section-title-wrap">
+              <h2>Manage My Appointments</h2>
+              <p>Lookup your confirmed appointments using your registered phone number.</p>
+            </div>
+
+            <form onSubmit={handleLookupBookings} className="phone-lookup-bar">
+              <input
+                type="tel"
+                placeholder="Enter 10-digit phone number (e.g. 9876543210)"
+                value={lookupPhone}
+                onChange={(e) => setLookupPhone(e.target.value)}
+              />
+              <button type="submit" disabled={bookingsLoading} className="btn-lookup">
+                {bookingsLoading ? 'Searching...' : 'Find Appointments'}
+              </button>
+            </form>
+
+            <div className="bookings-list-container">
+              {bookingsLoading ? (
+                <div className="slots-loading">
+                  <RefreshCw size={28} className="spin" />
+                  <p>Searching records...</p>
+                </div>
+              ) : customerBookings.length === 0 ? (
+                <div className="slots-empty">
+                  <User size={32} />
+                  <p>Enter your phone number above to see and manage your upcoming bookings.</p>
+                </div>
+              ) : (
+                <div className="bookings-cards-grid">
+                  {customerBookings.map((b) => (
+                    <div key={b.booking_id} className="booking-item-card">
+                      <div className="booking-item-header">
+                        <span className="booking-id-tag">Booking #{b.booking_id}</span>
+                        <span className={`status-pill ${b.status}`}>{b.status}</span>
+                      </div>
+
+                      <h3 className="booking-service">{b.service_name}</h3>
+                      <div className="booking-detail">
+                        <User size={16} />
+                        <span>Stylist: <strong>{b.stylist_name}</strong></span>
+                      </div>
+                      <div className="booking-detail">
+                        <Clock size={16} />
+                        <span>Date & Time: <strong>{new Date(b.start_time).toLocaleString()}</strong></span>
+                      </div>
+
+                      <div className="booking-actions">
+                        <button
+                          className="btn-reschedule"
+                          onClick={() => {
+                            setRescheduleModal(b);
+                            setRescheduleDate(new Date(b.start_time).toISOString().split('T')[0]);
+                          }}
+                        >
+                          Reschedule
+                        </button>
+                        <button
+                          className="btn-cancel"
+                          onClick={() => handleCancelBooking(b.booking_id)}
+                        >
+                          Cancel Appointment
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* Reschedule Modal */}
+      {rescheduleModal && (
+        <div className="modal-backdrop">
+          <div className="modal-dialog">
+            <div className="modal-header">
+              <h3>Reschedule Booking #{rescheduleModal.booking_id}</h3>
+              <button className="btn-close-modal" onClick={() => setRescheduleModal(null)}>
+                <X size={18} />
+              </button>
+            </div>
+            <form onSubmit={handleRescheduleSubmit} className="modal-body">
+              <p>Current: {rescheduleModal.service_name} with {rescheduleModal.stylist_name}</p>
+
+              <div className="form-group">
+                <label>New Date</label>
+                <input
+                  type="date"
+                  required
+                  value={rescheduleDate}
+                  onChange={(e) => setRescheduleDate(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                />
+              </div>
+
+              <div className="form-group">
+                <label>New Time (e.g. 14:00)</label>
+                <input
+                  type="time"
+                  required
+                  value={rescheduleTime}
+                  onChange={(e) => setRescheduleTime(e.target.value)}
+                />
+              </div>
+
+              <div className="modal-actions">
+                <button type="button" className="btn-secondary" onClick={() => setRescheduleModal(null)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary">
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default App;
