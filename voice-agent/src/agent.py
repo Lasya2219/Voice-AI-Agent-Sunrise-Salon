@@ -1056,5 +1056,34 @@ async def my_agent(ctx: JobContext):
     )
 
 
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
+
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Sunrise Salon Voice Agent is active")
+
+    def log_message(self, format, *args):
+        pass  # Suppress health check log spam
+
+
+def start_health_server():
+    port = int(os.getenv("PORT", "10000"))
+    try:
+        httpd = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        logger.info("Health check HTTP server listening on 0.0.0.0:%d", port)
+        httpd.serve_forever()
+    except Exception as e:
+        logger.warning("Could not start health check server: %s", e)
+
+
 if __name__ == "__main__":
+    # If deployed on cloud platforms like Render Web Service that probe an HTTP port
+    if "PORT" in os.environ:
+        threading.Thread(target=start_health_server, daemon=True).start()
+
     cli.run_app(server)
