@@ -141,6 +141,7 @@ function App() {
   const [lookupPhone, setLookupPhone] = useState('');
   const [customerBookings, setCustomerBookings] = useState([]);
   const [bookingsLoading, setBookingsLoading] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
   const [rescheduleModal, setRescheduleModal] = useState(null); // booking object or null
   const [rescheduleDate, setRescheduleDate] = useState('');
   const [rescheduleTime, setRescheduleTime] = useState('');
@@ -381,6 +382,7 @@ function App() {
       showNotification('Please enter a 10-digit customer phone number.', 'error');
       return;
     }
+    setHasSearched(true);
     setBookingsLoading(true);
     try {
       const data = await api.getCustomerBookings(lookupPhone.trim());
@@ -768,7 +770,11 @@ function App() {
               ) : customerBookings.length === 0 ? (
                 <div className="slots-empty">
                   <User size={32} />
-                  <p>Enter your phone number above to see and manage your upcoming bookings.</p>
+                  <p>
+                    {hasSearched
+                      ? `No appointments found for phone ending in ${lookupPhone.slice(-4)}. You can book a new slot under "Book Appointment", or try searching our demo customer: 9876543210.`
+                      : 'Enter your 10-digit phone number above to see and manage your upcoming bookings.'}
+                  </p>
                 </div>
               ) : (
                 <div className="bookings-cards-grid">
@@ -790,21 +796,29 @@ function App() {
                       </div>
 
                       <div className="booking-actions">
-                        <button
-                          className="btn-reschedule"
-                          onClick={() => {
-                            setRescheduleModal(b);
-                            setRescheduleDate(new Date(b.start_time).toISOString().split('T')[0]);
-                          }}
-                        >
-                          Reschedule
-                        </button>
-                        <button
-                          className="btn-cancel"
-                          onClick={() => handleCancelBooking(b.booking_id)}
-                        >
-                          Cancel Appointment
-                        </button>
+                        {b.status === 'confirmed' ? (
+                          <>
+                            <button
+                              className="btn-reschedule"
+                              onClick={() => {
+                                setRescheduleModal(b);
+                                setRescheduleDate(new Date(b.start_time).toISOString().split('T')[0]);
+                              }}
+                            >
+                              Reschedule
+                            </button>
+                            <button
+                              className="btn-cancel"
+                              onClick={() => handleCancelBooking(b.booking_id)}
+                            >
+                              Cancel Appointment
+                            </button>
+                          </>
+                        ) : (
+                          <span style={{ fontSize: '13px', color: '#ef4444', fontStyle: 'italic', padding: '6px 0' }}>
+                            Appointment is Cancelled (Slot Released)
+                          </span>
+                        )}
                       </div>
                     </div>
                   ))}

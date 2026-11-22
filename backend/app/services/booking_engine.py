@@ -695,7 +695,7 @@ async def get_customer_bookings(
         .where(
             Booking.business_id == business.id,
             Booking.customer_id == customer.id,
-            Booking.status == "confirmed",
+            Booking.status.in_(["confirmed", "cancelled"]),
         )
         .order_by(Booking.start_time.desc())
     )
