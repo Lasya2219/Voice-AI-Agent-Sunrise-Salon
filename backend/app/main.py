@@ -1,3 +1,4 @@
+import os
 from app.routes import bookings
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,9 +16,13 @@ from app.routes import availability
 
 app = FastAPI(title='PorsAI Voice Agent', description='PorsAI Voice Agent API')
 
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "*")
+origins = [o.strip() for o in allowed_origins_env.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origin_regex=r"https?://.*" if "*" in origins else None,
+    allow_origins=origins if "*" not in origins else [],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

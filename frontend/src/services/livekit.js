@@ -1,7 +1,9 @@
 import { Room, RoomEvent, Track } from "livekit-client";
 
 const BACKEND_URL =
-  import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
+  import.meta.env.VITE_BACKEND_URL ||
+  import.meta.env.VITE_API_BASE_URL ||
+  "http://localhost:8000";
 
 const ROOM_NAME =
   import.meta.env.VITE_LIVEKIT_ROOM_NAME || "sunrise-salon";

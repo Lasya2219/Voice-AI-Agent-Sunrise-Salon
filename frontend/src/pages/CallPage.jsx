@@ -16,7 +16,10 @@ import { LiveKitVoiceSession } from '../services/livekit';
 import CallButton from '../components/CallButton';
 import CallStatus from '../components/CallStatus';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+const BACKEND_URL =
+  import.meta.env.VITE_BACKEND_URL ||
+  import.meta.env.VITE_API_BASE_URL ||
+  'http://localhost:8000';
 
 export default function CallPage() {
   // Call session state
