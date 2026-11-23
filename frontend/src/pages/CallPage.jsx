@@ -1,383 +1,431 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Phone, 
-  Sparkles, 
-  Clock, 
-  MapPin, 
-  ShieldCheck, 
-  ExternalLink, 
-  Volume2, 
-  MessageSquare, 
-  Calendar,
+import { useState, useEffect, useRef } from 'react';
+import axios from 'axios';
+import {
+  Scissors,
+  Sparkles,
+  Clock,
+  MapPin,
+  Phone,
   User,
-  Scissors
+  Calendar,
+  ShieldCheck,
+  CheckCircle2,
+  CalendarCheck,
 } from 'lucide-react';
+import { LiveKitVoiceSession } from '../services/livekit';
 import CallButton from '../components/CallButton';
 import CallStatus from '../components/CallStatus';
-import api from '../services/api';
 
-export default function CallPage({ businessInfo }) {
-  const [callStatus, setCallStatus] = useState('idle'); // 'idle' | 'connecting' | 'connected' | 'speaking' | 'listening'
-  const [callDuration, setCallDuration] = useState(0);
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+
+export default function CallPage() {
+  // Call session state
+  const [status, setStatus] = useState('disconnected'); // 'disconnected' | 'connecting' | 'connected' | 'error'
+  const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
+  const [isUserSpeaking, setIsUserSpeaking] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [transcripts, setTranscripts] = useState([
-    {
-      sender: 'receptionist',
-      text: 'Hello! Thank you for calling Sunrise Salon. How can I help you today? You can ask about services, check availability, or book an appointment.',
-      time: 'Just now',
-    },
+  const [errorMessage, setErrorMessage] = useState(null);
+  const [callDuration, setCallDuration] = useState(0);
+
+  // Customer identity state
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [customerName, setCustomerName] = useState('');
+
+  // Business and services state
+  const [services, setServices] = useState([
+    { id: 1, name: 'Haircut & Styling', price: 500, duration_minutes: 45 },
+    { id: 2, name: 'Beard Grooming & Trim', price: 300, duration_minutes: 30 },
+    { id: 3, name: 'Hair Coloring & Highlights', price: 1500, duration_minutes: 90 },
+    { id: 4, name: 'Deep Cleansing Facial', price: 800, duration_minutes: 60 },
   ]);
-  const [inputText, setInputText] = useState('');
+  const [stylists, setStylists] = useState([
+    { id: 1, name: 'Priya Sharma', title: 'Senior Stylist & Colorist' },
+    { id: 2, name: 'Rahul Verma', title: 'Grooming & Fade Specialist' },
+  ]);
 
+  // Customer bookings check state
+  const [myBookings, setMyBookings] = useState(null);
+  const [isLoadingBookings, setIsLoadingBookings] = useState(false);
+
+  // Refs
+  const sessionRef = useRef(null);
   const timerRef = useRef(null);
-  const speechRecognitionRef = useRef(null);
-  const messagesEndRef = useRef(null);
 
-  // Auto-scroll transcript
+  // Fetch business info & services on mount
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [transcripts]);
+    async function loadSalonData() {
+      try {
+        const [servicesRes, stylistsRes] = await Promise.allSettled([
+          axios.get(`${BACKEND_URL}/api/services`),
+          axios.get(`${BACKEND_URL}/api/stylists`),
+        ]);
 
-  // Duration timer
+        if (servicesRes.status === 'fulfilled' && Array.isArray(servicesRes.value.data) && servicesRes.value.data.length > 0) {
+          setServices(servicesRes.value.data);
+        }
+        if (stylistsRes.status === 'fulfilled' && Array.isArray(stylistsRes.value.data) && stylistsRes.value.data.length > 0) {
+          setStylists(
+            stylistsRes.value.data.map((s) => ({
+              id: s.id,
+              name: s.name,
+              title: s.title || (s.name.toLowerCase().includes('priya') ? 'Senior Stylist' : 'Hair Specialist'),
+            }))
+          );
+        }
+      } catch (e) {
+        console.warn('Backend data fetch skipped, using default salon catalog:', e);
+      }
+    }
+    loadSalonData();
+  }, []);
+
+  // Call duration counter
   useEffect(() => {
-    if (callStatus !== 'idle') {
+    if (status === 'connected') {
       timerRef.current = setInterval(() => {
         setCallDuration((prev) => prev + 1);
       }, 1000);
     } else {
       clearInterval(timerRef.current);
-      setCallDuration(0);
     }
     return () => clearInterval(timerRef.current);
-  }, [callStatus]);
+  }, [status]);
 
-  // Handle Voice Recognition (Native Web Speech API)
+  // Clean up session on unmount
   useEffect(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = false;
-      recognition.lang = 'en-US';
-
-      recognition.onresult = (event) => {
-        const lastIndex = event.results.length - 1;
-        const transcriptText = event.results[lastIndex][0].transcript.trim();
-        if (transcriptText) {
-          handleUserSpeech(transcriptText);
-        }
-      };
-
-      recognition.onerror = (e) => {
-        console.warn('Speech recognition notice:', e.error);
-        if (callStatus === 'listening') {
-          setCallStatus('connected');
-        }
-      };
-
-      speechRecognitionRef.current = recognition;
-    }
+    return () => {
+      if (sessionRef.current) {
+        sessionRef.current.stop();
+      }
+    };
   }, []);
 
-  const speakText = (text) => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 1.0;
-      utterance.pitch = 1.05;
-      utterance.onstart = () => setCallStatus('speaking');
-      utterance.onend = () => {
-        setCallStatus('listening');
-        if (!isMuted && speechRecognitionRef.current) {
-          try {
-            speechRecognitionRef.current.start();
-          } catch (e) {
-            // Already started
-          }
-        }
-      };
-      window.speechSynthesis.speak(utterance);
-    } else {
-      setCallStatus('listening');
-    }
-  };
-
-  const handleStartCall = () => {
-    setCallStatus('connecting');
-    setTimeout(() => {
-      setCallStatus('speaking');
-      const welcomeMessage =
-        "Thank you for calling Sunrise Salon! I am your AI receptionist. Would you like to check availability, book an appointment, or ask about our services?";
-      
-      setTranscripts((prev) => [
-        ...prev,
-        {
-          sender: 'receptionist',
-          text: welcomeMessage,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        },
-      ]);
-
-      speakText(welcomeMessage);
-    }, 1200);
-  };
-
-  const handleEndCall = () => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-    if (speechRecognitionRef.current) {
-      try {
-        speechRecognitionRef.current.stop();
-      } catch (e) {}
-    }
-    setCallStatus('idle');
-    setTranscripts((prev) => [
-      ...prev,
-      {
-        sender: 'system',
-        text: 'Call ended. Thank you for choosing Sunrise Salon!',
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      },
-    ]);
-  };
-
-  const handleToggleMute = () => {
-    setIsMuted((prev) => {
-      const next = !prev;
-      if (next && speechRecognitionRef.current) {
-        try {
-          speechRecognitionRef.current.stop();
-        } catch (e) {}
-      } else if (!next && callStatus === 'listening' && speechRecognitionRef.current) {
-        try {
-          speechRecognitionRef.current.start();
-        } catch (e) {}
-      }
-      return next;
-    });
-  };
-
-  const handleUserSpeech = async (userText) => {
-    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    setTranscripts((prev) => [...prev, { sender: 'caller', text: userText, time: timeStr }]);
-
-    // Simple intelligent assistant logic to provide real answers from backend
-    const lower = userText.toLowerCase();
-    let reply = "I'd be delighted to assist you with that. Could you please specify your preferred service and date?";
-
+  // Start Call Handler
+  const handleStartCall = async () => {
+    setErrorMessage(null);
+    setCallDuration(0);
     try {
-      if (lower.includes('hour') || lower.includes('open') || lower.includes('close') || lower.includes('time')) {
-        reply = "Sunrise Salon is open Monday through Saturday from 10:00 AM to 8:00 PM. We are closed on Sundays.";
-      } else if (lower.includes('service') || lower.includes('price') || lower.includes('haircut') || lower.includes('facial')) {
-        const services = await api.getServices();
-        const names = services.slice(0, 4).map((s) => `${s.name} for ₹${s.price}`).join(', ');
-        reply = `We offer services including ${names}, and more. Which one would you like to book?`;
-      } else if (lower.includes('stylist') || lower.includes('anita') || lower.includes('rahul')) {
-        const stylists = await api.getStylists();
-        const names = stylists.map((s) => s.name).join(', ');
-        reply = `Our expert stylists are ${names}. Would you like to check availability with one of them?`;
-      } else if (lower.includes('cancel') || lower.includes('policy')) {
-        reply = "Cancellations made more than 2 hours before the appointment are completely free. Late cancellations within 2 hours are recorded under salon policy.";
-      } else if (lower.includes('slot') || lower.includes('availab') || lower.includes('tomorrow')) {
-        reply = "Tomorrow we have openings for Haircuts and Facials at 10:00 AM, 12:00 PM, 2:30 PM, and 4:00 PM. Which time suits you best?";
-      } else {
-        reply = `I noted that: "${userText}". Would you like me to check available slots for you?`;
-      }
-    } catch (e) {
-      reply = "I'm having a slight trouble reaching the salon booking system right now, but I can answer questions about our services and hours!";
-    }
+      const session = new LiveKitVoiceSession({
+        onStateChange: (newState) => {
+          setStatus(newState);
+          if (newState === 'disconnected') {
+            setIsAgentSpeaking(false);
+            setIsUserSpeaking(false);
+          }
+        },
+        onSpeakerChange: ({ isAgentSpeaking: agentActive, isUserSpeaking: userActive }) => {
+          setIsAgentSpeaking(agentActive);
+          setIsUserSpeaking(userActive);
+        },
+        onError: (err) => {
+          console.error('LiveKit session error:', err);
+          setErrorMessage(err.message || 'Failed to establish voice call. Check mic permissions.');
+        },
+      });
 
-    setTranscripts((prev) => [
-      ...prev,
-      {
-        sender: 'receptionist',
-        text: reply,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      },
-    ]);
+      sessionRef.current = session;
 
-    speakText(reply);
-  };
+      const identity = customerPhone ? `customer-${customerPhone.replace(/\D/g, '')}` : undefined;
+      const name = customerName.trim() || 'Salon Guest';
 
-  const handleSendPrompt = (prompt) => {
-    if (callStatus === 'idle') {
-      handleStartCall();
-      setTimeout(() => handleUserSpeech(prompt), 1500);
-    } else {
-      handleUserSpeech(prompt);
+      await session.start({
+        roomName: 'sunrise-salon-room',
+        identity,
+        name,
+      });
+      setIsMuted(false);
+    } catch (err) {
+      console.error('Start call error:', err);
+      setStatus('error');
+      setErrorMessage(err.message || 'Microphone access denied or LiveKit unavailable.');
     }
   };
 
-  const handleManualSubmit = (e) => {
-    e.preventDefault();
-    if (!inputText.trim()) return;
-    const text = inputText;
-    setInputText('');
-    handleUserSpeech(text);
+  // End Call Handler
+  const handleEndCall = async () => {
+    if (sessionRef.current) {
+      await sessionRef.current.stop();
+      sessionRef.current = null;
+    }
+    setStatus('disconnected');
+    setCallDuration(0);
+    setIsAgentSpeaking(false);
+    setIsUserSpeaking(false);
+  };
+
+  // Toggle Mute Handler
+  const handleToggleMute = async () => {
+    if (!sessionRef.current) return;
+    const nextMuted = !isMuted;
+    await sessionRef.current.setMuted(nextMuted);
+    setIsMuted(nextMuted);
+  };
+
+  // Check bookings for customer phone
+  const handleCheckMyBookings = async () => {
+    if (!customerPhone.trim()) {
+      alert('Please enter your phone number to check bookings.');
+      return;
+    }
+    setIsLoadingBookings(true);
+    setMyBookings(null);
+    try {
+      const res = await axios.get(`${BACKEND_URL}/api/bookings/customer`, {
+        params: {
+          business_slug: 'sunrise-salon',
+          customer_phone: customerPhone.trim(),
+        },
+      });
+      setMyBookings(res.data?.bookings || []);
+    } catch (err) {
+      console.warn('Failed to load bookings from API:', err);
+      setMyBookings([]);
+    } finally {
+      setIsLoadingBookings(false);
+    }
+  };
+
+  // Format call duration MM:SS
+  const formatDuration = (totalSeconds) => {
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
   return (
-    <div className="call-page-layout">
-      {/* Main Voice Agent Interaction Pane */}
-      <div className="voice-call-card">
-        <div className="voice-call-header">
-          <div className="agent-avatar-wrap">
-            <div className={`agent-avatar ${callStatus !== 'idle' ? 'active-pulse' : ''}`}>
-              <Sparkles className="avatar-icon" size={32} />
-            </div>
-            <div className="agent-meta">
-              <h2>Sunrise Salon Voice Receptionist</h2>
-              <p>Powered by LiveKit, Groq Whisper STT & LLM</p>
-            </div>
+    <div className="salon-app-wrapper">
+      {/* Top Navbar */}
+      <header className="salon-header">
+        <div className="salon-brand">
+          <div className="brand-icon-wrapper">
+            <Scissors className="w-6 h-6 text-amber-500" />
+            <Sparkles className="w-3.5 h-3.5 text-amber-400 absolute -top-1 -right-1" />
           </div>
-          <CallStatus 
-            status={callStatus} 
-            duration={callDuration} 
-            isMuted={isMuted} 
-          />
+          <div>
+            <h1 className="brand-title">Sunrise Salon</h1>
+            <p className="brand-tagline">Indiranagar, Bengaluru • Open 09:00 AM - 08:00 PM</p>
+          </div>
         </div>
 
-        {/* Live Conversation Transcript */}
-        <div className="transcript-container">
-          <div className="transcript-header">
-            <MessageSquare size={16} />
-            <span>Live Conversation Transcript</span>
+        <div className="header-badges">
+          <span className="badge-feature">
+            <Sparkles className="w-3.5 h-3.5 text-amber-500" /> AI Voice Receptionist
+          </span>
+          <span className="badge-feature">
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" /> Instant Confirmation
+          </span>
+        </div>
+      </header>
+
+      {/* Main Grid: Call Hero + Salon Details */}
+      <main className="salon-main-layout">
+        {/* Left Column: Voice Receptionist Experience */}
+        <section className="voice-experience-card">
+          <div className="voice-card-header">
+            <span className="voice-live-badge">
+              <span className={`pulse-dot ${status === 'connected' ? 'connected' : ''}`} />
+              {status === 'connected' ? `LIVE (${formatDuration(callDuration)})` : 'AI RECEPTIONIST'}
+            </span>
+            <span className="voice-subtitle">Talk naturally to book, reschedule, or inquire</span>
           </div>
 
-          <div className="transcript-messages">
-            {transcripts.map((msg, idx) => (
-              <div key={idx} className={`message-row ${msg.sender}`}>
-                <div className="message-bubble">
-                  <div className="message-sender">
-                    {msg.sender === 'receptionist' && 'Receptionist (AI)'}
-                    {msg.sender === 'caller' && 'You (Caller)'}
-                    {msg.sender === 'system' && 'System Notice'}
-                  </div>
-                  <div className="message-content">{msg.text}</div>
-                  <div className="message-time">{msg.time}</div>
-                </div>
+          {/* Animated AI Voice Avatar / Orb */}
+          <div className="voice-orb-container">
+            <div
+              className={`voice-orb ${
+                status === 'connected'
+                  ? isAgentSpeaking
+                    ? 'orb-agent-speaking'
+                    : isUserSpeaking
+                    ? 'orb-user-speaking'
+                    : 'orb-idle-connected'
+                  : status === 'connecting'
+                  ? 'orb-connecting'
+                  : 'orb-idle'
+              }`}
+            >
+              <div className="orb-inner">
+                <Scissors className="w-10 h-10 text-white opacity-90" />
               </div>
-            ))}
-            <div ref={messagesEndRef} />
+              <div className="orb-ripple ripple-1" />
+              <div className="orb-ripple ripple-2" />
+              <div className="orb-ripple ripple-3" />
+            </div>
           </div>
 
-          {/* Text input fallback during active call */}
-          {callStatus !== 'idle' && (
-            <form onSubmit={handleManualSubmit} className="transcript-input-form">
+          {/* Live Status and Audio Wave Indicator */}
+          <CallStatus
+            status={status}
+            isAgentSpeaking={isAgentSpeaking}
+            isUserSpeaking={isUserSpeaking}
+            isMuted={isMuted}
+            errorMessage={errorMessage}
+          />
+
+          {/* Caller Identity Form (Optional Pre-fill) */}
+          <div className="caller-input-group">
+            <div className="input-field-wrapper">
+              <User className="input-icon" />
               <input
                 type="text"
-                placeholder="Or type a message to the receptionist..."
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
+                placeholder="Your Name (e.g. John)"
+                value={customerName}
+                onChange={(e) => setCustomerName(e.target.value)}
+                disabled={status === 'connected'}
+                className="caller-input"
               />
-              <button type="submit" className="btn-send-text">Send</button>
-            </form>
-          )}
-        </div>
-
-        {/* Quick Suggestion Prompts */}
-        <div className="quick-prompts-section">
-          <span className="prompts-label">Try asking:</span>
-          <div className="prompts-pills">
-            <button
-              type="button"
-              className="prompt-pill"
-              onClick={() => handleSendPrompt("What are your available haircut slots tomorrow?")}
-            >
-              "Available haircut slots tomorrow?"
-            </button>
-            <button
-              type="button"
-              className="prompt-pill"
-              onClick={() => handleSendPrompt("Who are your stylists and what are their specialties?")}
-            >
-              "Who are your stylists?"
-            </button>
-            <button
-              type="button"
-              className="prompt-pill"
-              onClick={() => handleSendPrompt("What are your opening hours and cancellation policy?")}
-            >
-              "Hours & cancellation policy"
-            </button>
-            <button
-              type="button"
-              className="prompt-pill"
-              onClick={() => handleSendPrompt("I need to check my existing appointments with my phone number.")}
-            >
-              "Check my appointments"
-            </button>
+            </div>
+            <div className="input-field-wrapper">
+              <Phone className="input-icon" />
+              <input
+                type="tel"
+                placeholder="Phone (e.g. 9876543210)"
+                value={customerPhone}
+                onChange={(e) => setCustomerPhone(e.target.value)}
+                disabled={status === 'connected'}
+                className="caller-input"
+              />
+            </div>
           </div>
-        </div>
 
-        {/* Call Actions Footer */}
-        <div className="call-actions-footer">
+          {/* Primary Call Controls */}
           <CallButton
-            status={callStatus}
-            isMuted={isMuted}
+            status={status}
             onStartCall={handleStartCall}
             onEndCall={handleEndCall}
             onToggleMute={handleToggleMute}
+            isMuted={isMuted}
+            disabled={status === 'connecting'}
           />
-        </div>
-      </div>
 
-      {/* Side Information Panels */}
-      <div className="side-info-column">
-        {/* LiveKit Cloud Agent Panel */}
-        <div className="info-card livekit-cloud-card">
-          <div className="card-header-icon">
-            <Sparkles size={20} className="icon-gold" />
-            <h3>LiveKit Agent Pipeline</h3>
+          {/* Helpful Tips Accordion */}
+          <div className="voice-features-grid">
+            <div className="feature-item">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+              <span>Real-time slot availability</span>
+            </div>
+            <div className="feature-item">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+              <span>Double-confirmation on booking</span>
+            </div>
+            <div className="feature-item">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+              <span>Free cancellation up to 2 hrs before</span>
+            </div>
           </div>
-          <p className="card-desc">
-            The Python voice worker is running <code>voice-agent/src/agent.py dev</code> connected to LiveKit Cloud.
-          </p>
-          <div className="tech-stack-tags">
-            <span className="tag">LiveKit Agents</span>
-            <span className="tag">Groq Whisper</span>
-            <span className="tag">Groq LLM</span>
-            <span className="tag">Kokoro / Orpheus TTS</span>
-            <span className="tag">Silero VAD</span>
+        </section>
+
+        {/* Right Column: Salon Services, Stylists, and Booking Lookup */}
+        <section className="salon-info-column">
+          {/* Services Menu */}
+          <div className="info-card">
+            <div className="info-card-header">
+              <Scissors className="w-5 h-5 text-amber-500" />
+              <h3>Services & Pricing</h3>
+            </div>
+            <div className="services-list">
+              {services.map((svc) => (
+                <div key={svc.id} className="service-row">
+                  <div>
+                    <h4 className="service-name">{svc.name}</h4>
+                    <span className="service-duration">
+                      <Clock className="w-3.5 h-3.5 inline mr-1" />
+                      {svc.duration_minutes} mins
+                    </span>
+                  </div>
+                  <div className="service-price">₹{svc.price}</div>
+                </div>
+              ))}
+            </div>
           </div>
-          <div className="livekit-links">
-            <a
-              href="https://agents-playground.livekit.io/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn-external-link"
+
+          {/* Stylists & Timings */}
+          <div className="info-card-grid">
+            <div className="info-card">
+              <div className="info-card-header">
+                <User className="w-5 h-5 text-indigo-400" />
+                <h3>Our Stylists</h3>
+              </div>
+              <div className="stylists-list">
+                {stylists.map((st) => (
+                  <div key={st.id} className="stylist-badge">
+                    <span className="stylist-avatar">{st.name.charAt(0)}</span>
+                    <div>
+                      <div className="stylist-name">{st.name}</div>
+                      <div className="stylist-title">{st.title}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="info-card">
+              <div className="info-card-header">
+                <Clock className="w-5 h-5 text-teal-400" />
+                <h3>Hours & Location</h3>
+              </div>
+              <div className="hours-block">
+                <p className="hours-text">
+                  <strong>Tuesday – Sunday:</strong> 09:00 AM – 08:00 PM
+                </p>
+                <p className="hours-text text-rose-400">
+                  <strong>Monday:</strong> Closed (Weekly Holiday)
+                </p>
+                <div className="location-text">
+                  <MapPin className="w-4 h-4 text-amber-500 inline mr-1" />
+                  104 Park Avenue, Indiranagar, Bengaluru
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Check Existing Bookings Card */}
+          <div className="info-card">
+            <div className="info-card-header">
+              <CalendarCheck className="w-5 h-5 text-emerald-500" />
+              <h3>My Existing Appointments</h3>
+            </div>
+            <p className="text-sm text-neutral-400 mb-3">
+              Enter your phone number above or speak to the voice assistant to check your appointments.
+            </p>
+            <button
+              type="button"
+              className="btn-check-bookings"
+              onClick={handleCheckMyBookings}
+              disabled={isLoadingBookings}
             >
-              <span>LiveKit Agent Playground</span>
-              <ExternalLink size={15} />
-            </a>
-          </div>
-        </div>
+              {isLoadingBookings ? 'Checking...' : 'Check My Bookings Online'}
+            </button>
 
-        {/* Salon Details Card */}
-        <div className="info-card salon-info-card">
-          <div className="card-header-icon">
-            <Scissors size={20} className="icon-gold" />
-            <h3>{businessInfo?.name || "Sunrise Salon"}</h3>
+            {myBookings && (
+              <div className="bookings-result-list">
+                {myBookings.length === 0 ? (
+                  <p className="no-bookings-text">No active appointments found for this number.</p>
+                ) : (
+                  myBookings.map((b) => (
+                    <div key={b.id} className="booking-card-item">
+                      <div className="booking-id">Booking #{b.id} • {b.status?.toUpperCase()}</div>
+                      <div className="booking-time">
+                        <Calendar className="w-4 h-4 inline mr-1" />
+                        {new Date(b.start_time).toLocaleString('en-IN', {
+                          timeZone: 'Asia/Kolkata',
+                          dateStyle: 'medium',
+                          timeStyle: 'short',
+                        })}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
           </div>
-          <div className="info-item">
-            <MapPin size={16} />
-            <span>{businessInfo?.address || "123 Indiranagar 100ft Road, Bengaluru"}</span>
-          </div>
-          <div className="info-item">
-            <Phone size={16} />
-            <span>{businessInfo?.phone || "+91 98765 43210"}</span>
-          </div>
-          <div className="info-item">
-            <Clock size={16} />
-            <span>Mon - Sat: 10:00 AM - 8:00 PM (Sun Closed)</span>
-          </div>
-          <div className="info-item">
-            <ShieldCheck size={16} />
-            <span>Free cancellation up to 2 hours before appointment</span>
-          </div>
-        </div>
-      </div>
+        </section>
+      </main>
+
+      {/* Footer */}
+      <footer className="salon-footer">
+        <p>© 2026 Sunrise Salon • Powered by LiveKit, Groq & Kokoro Voice AI</p>
+      </footer>
     </div>
   );
 }

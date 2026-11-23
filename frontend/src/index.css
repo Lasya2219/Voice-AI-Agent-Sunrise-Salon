@@ -1,49 +1,74 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500;1,600&display=swap');
+
 :root {
-  --primary: #c98b2c;
-  --primary-hover: #b87b22;
-  --primary-light: rgba(201, 139, 44, 0.12);
-  --primary-border: rgba(201, 139, 44, 0.4);
-  --bg-main: #0c0d12;
-  --bg-card: #151720;
-  --bg-card-hover: #1b1e2a;
-  --border: #262938;
-  --text-main: #f3f4f8;
-  --text-muted: #959bb0;
-  --text-faint: #606579;
-  --success: #10b981;
-  --danger: #ef4444;
-  --warning: #f59e0b;
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 20px;
+  --color-bg-base: #faf7f2;
+  --color-bg-subtle: #f4ede2;
+  --color-surface: #fffdfa;
+  --color-surface-hover: #fcf9f4;
+  --color-border: #e6dcce;
+  --color-border-light: #f0e8dc;
+  
+  --color-text-main: #241d17;
+  --color-text-sub: #574c41;
+  --color-text-muted: #8c7e71;
+  
+  --color-gold-400: #d4a360;
+  --color-gold-500: #be8a45;
+  --color-gold-600: #9e6d2b;
+  --color-gold-bg: #f9f3e9;
+  
+  --color-emerald-500: #2a8356;
+  --color-emerald-bg: #eaf5ee;
+  --color-coral-500: #c94a44;
+  --color-coral-bg: #fbedeb;
+  --color-amber-500: #cf7925;
+  --color-amber-bg: #fdf3e7;
+
+  --shadow-sm: 0 2px 8px rgba(45, 33, 20, 0.04);
+  --shadow-md: 0 8px 24px rgba(45, 33, 20, 0.06);
+  --shadow-lg: 0 16px 48px rgba(45, 33, 20, 0.08);
+  --shadow-gold: 0 10px 30px rgba(190, 138, 69, 0.22);
+
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
   --radius-full: 9999px;
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 10px 25px rgba(0, 0, 0, 0.45);
-  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
 * {
-  box-sizing: border-box;
   margin: 0;
   padding: 0;
+  box-sizing: border-box;
 }
 
 body {
-  font-family: var(--font-sans);
-  background-color: var(--bg-main);
-  color: var(--text-main);
-  line-height: 1.5;
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: var(--color-bg-base);
+  color: var(--color-text-main);
   -webkit-font-smoothing: antialiased;
-  min-height: 100vh;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
 }
 
 button {
   font-family: inherit;
-  cursor: pointer;
   border: none;
+  background: none;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+input {
+  font-family: inherit;
   outline: none;
 }
 
-input, select {
-  font-family: inherit;
+#root {
+  min-height: 100vh;
 }

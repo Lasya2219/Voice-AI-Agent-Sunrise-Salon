@@ -75,14 +75,14 @@ class BookingListResponse(BaseModel):
 class RescheduleRequest(BaseModel):
     business_slug: str
     booking_id: int = Field(gt=0)
-    customer_phone: str = ""
+    customer_phone: str
     new_start_time: AwareDatetime
 
 
 class CancelBookingRequest(BaseModel):
     business_slug: str
     booking_id: int = Field(gt=0)
-    customer_phone: str = ""
+    customer_phone: str
 
 
 BookingResult = BookingResponse | BookingFailure

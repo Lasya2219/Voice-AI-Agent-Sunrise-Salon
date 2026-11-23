@@ -1,9 +1,8 @@
 
-import re
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select, or_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.business import Business
@@ -664,13 +663,6 @@ async def create_booking(
 
 
 
-def _clean_phone(phone_str: str | None) -> str:
-    if not phone_str:
-        return ""
-    digits = re.sub(r"\D", "", phone_str)
-    return digits[-10:] if len(digits) >= 10 else digits
-
-
 async def get_customer_bookings(
     db: AsyncSession,
     business_slug: str,
@@ -685,30 +677,16 @@ async def get_customer_bookings(
     if business is None:
         raise ValueError("Business not found.")
 
-    clean = _clean_phone(customer_phone)
-    phone_filter = (
-        or_(
-            Customer.phone == customer_phone,
-            Customer.phone == clean,
-            Customer.phone.endswith(clean),
-        )
-        if clean
-        else (Customer.phone == customer_phone)
-    )
-
     customer_result = await db.execute(
         select(Customer).where(
             Customer.business_id == business.id,
-            phone_filter,
+            Customer.phone == customer_phone,
         )
     )
-    customers = customer_result.scalars().all()
+    customer = customer_result.scalar_one_or_none()
 
-    if not customers:
+    if customer is None:
         return []
-
-    customer_ids = [c.id for c in customers]
-    customer_name_map = {c.id: c.name for c in customers}
 
     result = await db.execute(
         select(Booking, Service, Stylist)
@@ -716,8 +694,8 @@ async def get_customer_bookings(
         .join(Stylist, Booking.stylist_id == Stylist.id)
         .where(
             Booking.business_id == business.id,
-            Booking.customer_id.in_(customer_ids),
-            Booking.status.in_(["confirmed", "cancelled"]),
+            Booking.customer_id == customer.id,
+            Booking.status == "confirmed",
         )
         .order_by(Booking.start_time.desc())
     )
@@ -727,7 +705,7 @@ async def get_customer_bookings(
     return [
         BookingResponse(
             booking_id=booking.id,
-            customer_name=customer_name_map.get(booking.customer_id, "Customer"),
+            customer_name=customer.name,
             service_name=service.name,
             stylist_name=stylist.name,
             start_time=booking.start_time.astimezone(timezone_info),
@@ -757,26 +735,16 @@ async def reschedule_booking(
 
     timezone_info = ZoneInfo(business.timezone)
 
-    clean = _clean_phone(customer_phone)
-    query = (
-        select(Booking)
-        .join(Customer, Booking.customer_id == Customer.id)
-        .where(
+    booking_result = await db.execute(
+        select(Booking).join(
+            Customer, Booking.customer_id == Customer.id
+        ).where(
             Booking.id == booking_id,
             Booking.business_id == business.id,
+            Customer.phone == customer_phone,
             Booking.status == "confirmed",
         )
     )
-    if clean:
-        query = query.where(
-            or_(
-                Customer.phone == customer_phone,
-                Customer.phone == clean,
-                Customer.phone.endswith(clean),
-            )
-        )
-
-    booking_result = await db.execute(query)
     booking = booking_result.scalar_one_or_none()
 
     if booking is None:
@@ -973,26 +941,17 @@ async def cancel_booking(
 
     timezone_info = ZoneInfo(business.timezone)
 
-    clean = _clean_phone(customer_phone)
-    query = (
-        select(Booking)
-        .join(Customer, Booking.customer_id == Customer.id)
-        .where(
+    result = await db.execute(
+        select(Booking).join(
+            Customer, Booking.customer_id == Customer.id
+        ).where(
             Booking.id == booking_id,
             Booking.business_id == business.id,
+            Customer.phone == customer_phone,
             Booking.status == "confirmed",
         )
     )
-    if clean:
-        query = query.where(
-            or_(
-                Customer.phone == customer_phone,
-                Customer.phone == clean,
-                Customer.phone.endswith(clean),
-            )
-        )
 
-    result = await db.execute(query)
     booking = result.scalar_one_or_none()
 
     if booking is None:
