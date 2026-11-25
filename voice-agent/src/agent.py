@@ -12,6 +12,7 @@ from livekit.agents import (
     AgentServer,
     AgentSession,
     JobContext,
+    JobProcess,
     RunContext,
     TurnHandlingOptions,
     cli,
@@ -22,7 +23,6 @@ from livekit.plugins import groq, openai, silero
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
-load_dotenv()
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 BUSINESS_SLUG = os.getenv("BUSINESS_SLUG", "sunrise-salon")
@@ -132,15 +132,9 @@ class Assistant(Agent):
 
                 Conversation rules:
                 - Ask ONLY ONE question at a time.
-                - Keep responses short, concise, and natural (1 to 2 sentences) suitable for speech.
+                - Keep responses short, concise, and natural (1 to 3 sentences) suitable for speech.
                 - Never ask for information the caller has already provided.
                 - Clarify ambiguous dates, times, or service choices politely.
-                - CRITICAL VOICE FORMATTING RULES:
-                  * You are speaking on a live phone call. Always output plain conversational English sentences.
-                  * NEVER use Markdown, bullet points (- or *), numbered lists, colons, brackets, or tables.
-                  * NEVER use line breaks to separate list items.
-                  * When listing available slots, times, or services, speak them in a single fluid sentence separated by commas (for example: "Available times with Anita tomorrow are 12:00 PM, 12:30 PM, 1:00 PM, and 1:30 PM. Which time works best for you?").
-                  * Keep slot options to at most 4 to 5 times so the caller is not overwhelmed.
                 - When cancelling, explain the cancellation policy (free if more than 2 hours in advance; late cancellation if within 2 hours).
                 - BEFORE calling create_booking, reschedule_booking, or cancel_booking with customer_confirmed=True:
                   1. Always call the tool first with customer_confirmed=False to verify availability and stage the details.
@@ -378,14 +372,10 @@ class Assistant(Agent):
                 for s in available_slots:
                     dt = datetime.fromisoformat(s["start_time"])
                     time_str = format_slot_time(dt, SALON_TIMEZONE)
-                    if stylist_dict:
-                        slot_strings.append(time_str)
-                    else:
-                        slot_strings.append(f"{time_str} with {s['stylist_name']}")
+                    slot_strings.append(f"{time_str} ({s['stylist_name']})")
                 slots_text = ", ".join(slot_strings)
-                stylist_note = f" with {stylist_dict['name']}" if stylist_dict else ""
                 return (
-                    f"On {date_readable}, available slots for {svc_name}{stylist_note} are: {slots_text}. "
+                    f"On {date_readable}, available slots for {svc_name} are: {slots_text}. "
                     "Which time would you prefer?"
                 )
 
@@ -736,10 +726,12 @@ class Assistant(Agent):
                 start_dt = datetime.fromisoformat(b["start_time"])
                 readable = format_datetime_readable(start_dt, SALON_TIMEZONE)
                 lines.append(
-                    f"Booking #{b['booking_id']} for {b['service_name']} with {b['stylist_name']} on {readable}"
+                    f"Booking #{b['booking_id']}: {b['service_name']} with {b['stylist_name']} on {readable} (Status: {b['status']})"
                 )
 
-            return f"You have {len(bookings)} confirmed appointment(s): " + "; ".join(lines) + "."
+            return f"You have {len(bookings)} confirmed appointment(s):\n" + "\n".join(
+                lines
+            )
 
         except httpx.HTTPError as err:
             logger.error("Error listing bookings: %s", err)
@@ -1005,7 +997,17 @@ class Assistant(Agent):
             return "Unable to communicate with the salon cancellation server right now. Please try again."
 
 
-server = AgentServer()
+# server = AgentServer()
+
+def prewarm(proc: JobProcess):
+    proc.userdata["vad"] = silero.VAD.load()
+
+
+server = AgentServer(
+    setup_fnc=prewarm,
+    num_idle_processes=0,
+    load_threshold=float("inf"),
+)
 
 
 @server.rtc_session(agent_name="sunrise-salon")
@@ -1014,6 +1016,8 @@ async def my_agent(ctx: JobContext):
     ctx.log_context_fields = {
         "room": ctx.room.name,
     }
+
+    await ctx.connect()
 
     session = AgentSession(
         stt=groq.STT(
@@ -1028,13 +1032,14 @@ async def my_agent(ctx: JobContext):
         #     voice="af_alloy",
         #     api_key="not-needed",
         #     base_url="http://localhost:8880/v1",
-        #     response_format="pcm",
+        #     response_format="wav",
         # ),
         tts=groq.TTS(
             model="canopylabs/orpheus-v1-english",
             voice="autumn",  # Options: autumn, diana, hannah, austin, daniel, troy
         ),
-        vad=silero.VAD.load(),
+        # vad=silero.VAD.load(),
+        vad=ctx.proc.userdata["vad"],
         turn_handling=TurnHandlingOptions(
             turn_detection="vad",
             preemptive_generation={"enabled": False},
@@ -1047,43 +1052,11 @@ async def my_agent(ctx: JobContext):
         room=ctx.room,
     )
 
-    # Join the room and connect to the user
-    await ctx.connect()
-
     # Speak first: greet the user before they say anything
     await session.generate_reply(
         instructions="Enthusiastically greet the user and offer to help."
     )
 
 
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import threading
-
-
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"Sunrise Salon Voice Agent is active")
-
-    def log_message(self, format, *args):
-        pass  # Suppress health check log spam
-
-
-def start_health_server():
-    port = int(os.getenv("PORT", "10000"))
-    try:
-        httpd = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-        logger.info("Health check HTTP server listening on 0.0.0.0:%d", port)
-        httpd.serve_forever()
-    except Exception as e:
-        logger.warning("Could not start health check server: %s", e)
-
-
 if __name__ == "__main__":
-    # If deployed on cloud platforms like Render Web Service that probe an HTTP port
-    if "PORT" in os.environ:
-        threading.Thread(target=start_health_server, daemon=True).start()
-
     cli.run_app(server)
