@@ -23,8 +23,9 @@ from livekit.plugins import groq, openai, silero
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
+load_dotenv()
 
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+BACKEND_URL = os.getenv("BACKEND_URL", "https://voice-ai-agent-sunrise-salon.onrender.com")
 BUSINESS_SLUG = os.getenv("BUSINESS_SLUG", "sunrise-salon")
 try:
     SALON_TIMEZONE = ZoneInfo("Asia/Kolkata")
@@ -1007,6 +1008,10 @@ server = AgentServer(
     setup_fnc=prewarm,
     num_idle_processes=0,
     load_threshold=float("inf"),
+    port=int(os.getenv("PORT", "8081")),
+    ws_url=os.getenv("LIVEKIT_URL"),
+    api_key=os.getenv("LIVEKIT_API_KEY"),
+    api_secret=os.getenv("LIVEKIT_API_SECRET"),
 )
 
 
